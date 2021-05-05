@@ -31,7 +31,7 @@ import {
   NormalizedCache,
   ReadMergeModifyContext,
 } from './types';
-import { supportsResultCaching } from './entityStore';
+import { maybeDependOnExistenceOfEntity, supportsResultCaching } from './entityStore';
 import { getTypenameFromStoreObject } from './helpers';
 import { Policies } from './policies';
 import { InMemoryCache } from './inMemoryCache';
@@ -68,12 +68,14 @@ function missingFromInvariant(
 type ExecSelectionSetOptions = {
   selectionSet: SelectionSetNode;
   objectOrReference: StoreObject | Reference;
+  enclosingRef: Reference;
   context: ReadContext;
 };
 
 type ExecSubSelectedArrayOptions = {
   field: FieldNode;
   array: any[];
+  enclosingRef: Reference;
   context: ReadContext;
 };
 
@@ -84,18 +86,65 @@ export interface StoreReaderConfig {
 }
 
 export class StoreReader {
-  private wrappedExecuteSubSelectedArray: OptimisticWrapperFunction<
+  private executeSubSelectedArray: OptimisticWrapperFunction<
     [ExecSubSelectedArrayOptions],
     ExecResult<any>,
-    [ExecSubSelectedArrayOptions]> | null;
+    [ExecSubSelectedArrayOptions]>;
 
-  private wrappedExecuteSelectionSet: OptimisticWrapperFunction<
+  private executeSelectionSet: OptimisticWrapperFunction<
     [ExecSelectionSetOptions], // Actual arguments tuple type.
     ExecResult, // Actual return type.
     // Arguments type after keyArgs translation.
-    [SelectionSetNode, StoreObject | Reference, ReadMergeModifyContext]> | null;
+    [SelectionSetNode, StoreObject | Reference, ReadMergeModifyContext]>;
   constructor(private config: StoreReaderConfig) {
     this.config = { addTypename: true, ...config };
+
+    this.executeSelectionSet = wrap(options => {
+      maybeDependOnExistenceOfEntity(
+        options.context.store,
+        options.enclosingRef.__ref,
+      );
+      return this.execSelectionSetImpl(options);
+    }, {
+      keyArgs(options) {
+        return [
+          options.selectionSet,
+          options.objectOrReference,
+          options.context,
+        ];
+      },
+      max: this.config.resultCacheMaxSize,
+      // Note that the parameters of makeCacheKey are determined by the
+      // array returned by keyArgs.
+      makeCacheKey(selectionSet, parent, context) {
+        if (supportsResultCaching(context.store)) {
+          return context.store.makeCacheKey(
+            selectionSet,
+            isReference(parent) ? parent.__ref : parent,
+            context.varString,
+          );
+        }
+      }
+    });
+
+    this.executeSubSelectedArray = wrap((options: ExecSubSelectedArrayOptions) => {
+      maybeDependOnExistenceOfEntity(
+        options.context.store,
+        options.enclosingRef.__ref,
+      );
+      return this.execSubSelectedArrayImpl(options);
+    }, {
+      max: this.config.resultCacheMaxSize,
+      makeCacheKey({ field, array, context }) {
+        if (supportsResultCaching(context.store)) {
+          return context.store.makeCacheKey(
+            field,
+            array,
+            context.varString,
+          );
+        }
+      }
+    });
   }
 
   /**
@@ -116,12 +165,14 @@ export class StoreReader {
 
     variables = {
       ...getDefaultValues(getQueryDefinition(query)),
-      ...variables,
+      ...variables!,
     };
 
+    const rootRef = makeReference(rootId);
     const execResult = this.executeSelectionSet({
       selectionSet: getMainDefinition(query).selectionSet,
-      objectOrReference: makeReference(rootId),
+      objectOrReference: rootRef,
+      enclosingRef: rootRef,
       context: {
         store,
         query,
@@ -155,7 +206,7 @@ export class StoreReader {
   ): boolean {
     if (supportsResultCaching(context.store) &&
         this.knownResults.get(result) === selectionSet) {
-      const latest = this.wrappedExecuteSelectionSet?.peek(selectionSet, parent, context);
+      const latest = this.executeSelectionSet.peek(selectionSet, parent, context);
       if (latest && result === latest.result) {
         return true;
       }
@@ -163,37 +214,11 @@ export class StoreReader {
     return false;
   }
 
-  private executeSelectionSet(options: ExecSelectionSetOptions) {
-    if (!this.wrappedExecuteSelectionSet) {
-      this.wrappedExecuteSelectionSet = wrap(options => this.execSelectionSetImpl(options), {
-        keyArgs(options) {
-          return [
-            options.selectionSet,
-            options.objectOrReference,
-            options.context,
-          ];
-        },
-        max: this.config.resultCacheMaxSize,
-        // Note that the parameters of makeCacheKey are determined by the
-        // array returned by keyArgs.
-        makeCacheKey(selectionSet, parent, context) {
-          if (supportsResultCaching(context.store)) {
-            return context.store.makeCacheKey(
-              selectionSet,
-              isReference(parent) ? parent.__ref : parent,
-              context.varString,
-            );
-          }
-        }
-      });
-    }
-    return this.wrappedExecuteSelectionSet(options);
-  }
-
   // Uncached version of executeSelectionSet.
   private execSelectionSetImpl({
     selectionSet,
     objectOrReference,
+    enclosingRef,
     context,
   }: ExecSelectionSetOptions): ExecResult {
     if (isReference(objectOrReference) &&
@@ -285,6 +310,7 @@ export class StoreReader {
           fieldValue = handleMissing(this.executeSubSelectedArray({
             field: selection,
             array: fieldValue,
+            enclosingRef,
             context,
           }));
 
@@ -309,6 +335,7 @@ export class StoreReader {
           fieldValue = handleMissing(this.executeSelectionSet({
             selectionSet: selection.selectionSet,
             objectOrReference: fieldValue as StoreObject | Reference,
+            enclosingRef: isReference(fieldValue) ? fieldValue : enclosingRef,
             context,
           }));
         }
@@ -350,31 +377,11 @@ export class StoreReader {
 
   private knownResults = new WeakMap<Record<string, any>, SelectionSetNode>();
 
-  // Cached version of execSubSelectedArrayImpl.
-  private executeSubSelectedArray(options: ExecSubSelectedArrayOptions) {
-    if (!this.wrappedExecuteSubSelectedArray) {
-      this.wrappedExecuteSubSelectedArray =  wrap((options: ExecSubSelectedArrayOptions) => {
-        return this.execSubSelectedArrayImpl(options);
-      }, {
-        max: this.config.resultCacheMaxSize,
-        makeCacheKey({ field, array, context }) {
-          if (supportsResultCaching(context.store)) {
-            return context.store.makeCacheKey(
-              field,
-              array,
-              context.varString,
-            );
-          }
-        }
-      });
-    }
-    return this.wrappedExecuteSubSelectedArray(options);
-  }
-
   // Uncached version of executeSubSelectedArray.
   private execSubSelectedArrayImpl({
     field,
     array,
+    enclosingRef,
     context,
   }: ExecSubSelectedArrayOptions): ExecResult {
     let missing: MissingFieldError[] | undefined;
@@ -407,6 +414,7 @@ export class StoreReader {
         return handleMissing(this.executeSubSelectedArray({
           field,
           array: item,
+          enclosingRef,
           context,
         }), i);
       }
@@ -416,6 +424,7 @@ export class StoreReader {
         return handleMissing(this.executeSelectionSet({
           selectionSet: field.selectionSet,
           objectOrReference: item,
+          enclosingRef: isReference(item) ? item : enclosingRef,
           context,
         }), i);
       }
