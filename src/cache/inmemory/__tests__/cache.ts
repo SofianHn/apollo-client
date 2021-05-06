@@ -1503,9 +1503,9 @@ describe('Cache', () => {
       expect(result2).not.toBe(result1);
     });
 
-    it("should set cache limit when resultCachMaxSize is set", () => {
-      const resultCachMaxSize = 100;
-      const { writeValue, readValue } = setupTestData({ resultCachMaxSize });
+    it("should set cache limit when resultCacheMaxSize is set", () => {
+      const resultCacheMaxSize = 100;
+      const { writeValue, readValue } = setupTestData({ resultCacheMaxSize });
 
       let i = 0;
       /*
@@ -1526,7 +1526,7 @@ describe('Cache', () => {
        * size and the value are still equal, fail early as we don't need to wait
        * to timeout.
        */
-      while (result2 === result1 && i < resultCachMaxSize) {
+      while (result2 === result1 && i < resultCacheMaxSize) {
         i++;
         writeValue(i);
         readValue(i);

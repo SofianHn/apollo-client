@@ -33,7 +33,7 @@ export interface InMemoryCacheConfig extends ApolloReducerConfig {
   resultCaching?: boolean;
   possibleTypes?: PossibleTypesMap;
   typePolicies?: TypePolicies;
-  resultCachMaxSize?: number;
+  resultCacheMaxSize?: number;
 }
 
 const defaultConfig: InMemoryCacheConfig = {
@@ -99,7 +99,7 @@ export class InMemoryCache extends ApolloCache<NormalizedCacheObject> {
       this.storeReader = new StoreReader({
         cache: this,
         addTypename: this.addTypename,
-        resultCachMaxSize: this.config.resultCachMaxSize,
+        resultCacheMaxSize: this.config.resultCacheMaxSize,
       }),
     );
   }
@@ -370,7 +370,7 @@ export class InMemoryCache extends ApolloCache<NormalizedCacheObject> {
       ) => {
         return this.broadcastWatch.call(this, c, !!fromOptimisticTransaction);
       }, {
-        max: this.config.resultCachMaxSize,
+        max: this.config.resultCacheMaxSize,
         makeCacheKey: (c: Cache.WatchOptions) => {
           // Return a cache key (thus enabling result caching) only if we're
           // currently using a data store that can track cache dependencies.

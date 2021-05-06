@@ -80,7 +80,7 @@ type ExecSubSelectedArrayOptions = {
 export interface StoreReaderConfig {
   cache: InMemoryCache,
   addTypename?: boolean;
-  resultCachMaxSize?: number;
+  resultCacheMaxSize?: number;
 }
 
 export class StoreReader {
@@ -173,7 +173,7 @@ export class StoreReader {
             options.context,
           ];
         },
-        max: this.config.resultCachMaxSize,
+        max: this.config.resultCacheMaxSize,
         // Note that the parameters of makeCacheKey are determined by the
         // array returned by keyArgs.
         makeCacheKey(selectionSet, parent, context) {
@@ -356,7 +356,7 @@ export class StoreReader {
       this.wrappedExecuteSubSelectedArray =  wrap((options: ExecSubSelectedArrayOptions) => {
         return this.execSubSelectedArrayImpl(options);
       }, {
-        max: this.config.resultCachMaxSize,
+        max: this.config.resultCacheMaxSize,
         makeCacheKey({ field, array, context }) {
           if (supportsResultCaching(context.store)) {
             return context.store.makeCacheKey(
